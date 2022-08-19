@@ -15,6 +15,7 @@ limitations under the License. */
 #include <memory>
 #include <string>
 #include "paddle/fluid/framework/op_registry.h"
+#include "paddle/fluid/framework/op_version_registry.h"
 
 namespace paddle {
 namespace operators {
@@ -190,7 +191,7 @@ class FusedAttentionOp : public framework::OperatorWithKernel {
     // the same as QKOut's shape.
     ctx->SetOutputDim("AttnDropoutOut",
                       {x_dim[0], y_dim[1], x_dim[1], out_seq_len});
-    if (ctx->Attrs().Get<bool>("attn_dropout_is_test") == false) {
+    if (ctx->Attrs().Get<bool>("is_test") == false) {
       ctx->SetOutputDim("AttnDropoutMaskOut",
                         {x_dim[0], y_dim[1], x_dim[1], out_seq_len});
     }
@@ -202,7 +203,7 @@ class FusedAttentionOp : public framework::OperatorWithKernel {
     ctx->SetOutputDim("FMHAOut", {x_dim[0], x_dim[1], y_dim[1], y_dim[2]});
     ctx->SetOutputDim("OutLinearOut", ctx->GetInputDim("X"));
 
-    if (ctx->Attrs().Get<bool>("dropout_is_test") == false) {
+    if (ctx->Attrs().Get<bool>("is_test") == false) {
       ctx->SetOutputDim("DropoutMaskOut", ctx->GetInputDim("X"));
     }
 
@@ -297,7 +298,7 @@ class FusedAttentionOpMaker : public framework::OpProtoAndCheckerMaker {
               platform::errors::InvalidArgument(
                   "'attn_dropout_rate' must be between 0.0 and 1.0."));
         });
-    AddAttr<bool>("attn_dropout_is_test",
+    AddAttr<bool>("is_test",
                   "(bool, default false) Set to true for inference only, false "
                   "for training. Some layers may run faster when this is true.")
         .SetDefault(false);
@@ -341,11 +342,6 @@ class FusedAttentionOpMaker : public framework::OpProtoAndCheckerMaker {
                             platform::errors::InvalidArgument(
                                 "'dropout_rate' must be between 0.0 and 1.0."));
         });
-
-    AddAttr<bool>("dropout_is_test",
-                  "(bool, default false) Set to true for inference only, false "
-                  "for training. Some layers may run faster when this is true.")
-        .SetDefault(false);
     AddAttr<bool>("dropout_fix_seed",
                   "A flag indicating whether to use a fixed seed to generate "
                   "random mask. NOTE: DO NOT set this flag to true in "
@@ -377,19 +373,22 @@ class FusedAttentionOpMaker : public framework::OpProtoAndCheckerMaker {
                                 "0.0 and 0.001, But received [%s].",
                                 ln_epsilon));
         });
+    AddAttr<bool>("add_residual", "Whether to add residual.").SetDefault(true);
     AddAttr<int>(
         "ring_id",
         "ring id for tensor model parallel. distributed training and inference")
         .SetDefault(-1);
 
     AddComment(R"DOC(
-  Add fused attention op whose logic is as follows:
-  // @input: [batch_size, seq_len, 3, num_head, head_dim] 
+  The fused_attention operator is the same as following pseudo codes:
+
+  // @input: [batch_size, seq_len, embed_dim] 
   // @final_out: [batch_size, seq_len, num_heads, head_dim] 
+  residual = input
   if (pre_layernorm)
-    out = layer_norm(input);
-	out = compute_qkv(out) + bias;
-	// fmha module
+    query = layer_norm(input);
+  out = compute_qkv(query) + qkv_bias;
+  // fmha module
   {
     out = transpose(out, perm=[2, 0, 3, 1, 4]);
     out = q * k^t;
@@ -400,11 +399,14 @@ class FusedAttentionOpMaker : public framework::OpProtoAndCheckerMaker {
     out = transpose(out, perm=[0, 2, 1, 3]);
                 
   }
-	out = out_linear(out);
-  if (pre_layernorm)
-    final_out = residual + dropout(bias + out);
-  else
-    final_out = layer_norm(residual + dropout(bias + out));
+  // out linear
+  out = linear(out);
+  if add_residual:
+    out = residual + dropout(out);
+  else:
+    out = dropout(out);
+  if (!pre_layernorm)
+    out = layer_norm(out);
     )DOC");
   }
 };
@@ -414,10 +416,9 @@ class FusedAttentionGradOp : public framework::OperatorWithKernel {
   using framework::OperatorWithKernel::OperatorWithKernel;
 
   void InferShape(framework::InferShapeContext *ctx) const override {
-    PADDLE_ENFORCE_EQ(
-        ctx->Attrs().Get<bool>("attn_dropout_is_test"), false,
-        platform::errors::InvalidArgument(
-            "GradOp is only callable when attn_dropout_is_test is false"));
+    PADDLE_ENFORCE_EQ(ctx->Attrs().Get<bool>("is_test"), false,
+                      platform::errors::InvalidArgument(
+                          "GradOp is only callable when is_test is false"));
 
     if (ctx->Attrs().Get<bool>("pre_layer_norm") == false) {
       OP_INOUT_CHECK(ctx->HasInput("Ln2Mean"), "Input", "Ln2Mean",
@@ -655,3 +656,11 @@ REGISTER_OPERATOR(fused_attention, ops::FusedAttentionOp,
                   ops::FusedAttentionGradOpMaker<paddle::framework::OpDesc>,
                   ops::FusedAttentionGradOpMaker<paddle::imperative::OpBase>);
 REGISTER_OPERATOR(fused_attention_grad, ops::FusedAttentionGradOp);
+
+REGISTER_OP_VERSION(fused_attention)
+    .AddCheckpoint(
+        R"ROC(
+              Add a new attribute [add_residual] )ROC",
+        paddle::framework::compatible::OpVersionDesc().NewAttr(
+            "add_residual", "A flag to indicate whether to add residual.",
+            true));

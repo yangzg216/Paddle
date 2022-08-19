@@ -1001,7 +1001,7 @@ set_tests_properties(test_matmul_op PROPERTIES TIMEOUT 120)
 set_tests_properties(test_nearest_interp_v2_op PROPERTIES TIMEOUT 120)
 set_tests_properties(test_trilinear_interp_op PROPERTIES TIMEOUT 120)
 set_tests_properties(test_bicubic_interp_v2_op PROPERTIES TIMEOUT 120)
-set_tests_properties(test_gather_op PROPERTIES TIMEOUT 120)
+set_tests_properties(test_gather_op PROPERTIES TIMEOUT 180)
 set_tests_properties(test_static_save_load PROPERTIES TIMEOUT 250)
 set_tests_properties(test_pylayer_op PROPERTIES TIMEOUT 120)
 set_tests_properties(test_paddle_save_load_binary PROPERTIES TIMEOUT 120)
@@ -1203,6 +1203,7 @@ if((WITH_ROCM OR WITH_GPU) AND NOT WIN32)
             test_collective_alltoall_api
             test_collective_global_gather
             test_collective_global_scatter
+            test_collective_sendrecv_api
             PROPERTIES LABELS "RUN_TYPE=DIST")
     endif()
     set_tests_properties(test_paddle_multiprocessing PROPERTIES TIMEOUT 120)
@@ -1238,4 +1239,15 @@ if (WITH_GLOO)
     set_tests_properties(test_parallel_dygraph_unused_variables_gloo PROPERTIES TIMEOUT 120)
     set_tests_properties(test_parallel_dygraph_sparse_embedding_gloo PROPERTIES TIMEOUT 120)
     set_tests_properties(test_parallel_dygraph_sparse_embedding_over_height_gloo PROPERTIES TIMEOUT 120)
+endif()
+
+if($ENV{USE_STANDALONE_EXECUTOR})
+    # these test will fail in some server due to PR#42149, temporarily set it use old executor.
+    set_tests_properties(test_apply_pass_to_program PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
+    set_tests_properties(test_buffer_shared_memory_reuse_pass PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
+    set_tests_properties(test_buffer_shared_memory_reuse_pass_and_fuse_optimization_op_pass PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
+    set_tests_properties(test_imperative_optimizer PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
+    set_tests_properties(test_imperative_star_gan_with_gradient_penalty PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
+    set_tests_properties(test_switch_autotune PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
+    set_tests_properties(test_imperative_mnist_sorted_gradient PROPERTIES ENVIRONMENT FLAGS_USE_STANDALONE_EXECUTOR=0)
 endif()

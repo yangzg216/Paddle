@@ -96,6 +96,7 @@ class _DataLoaderIterBase(object):
         self._auto_collate_batch = loader.auto_collate_batch
         self._num_workers = loader.num_workers
         self._use_buffer_reader = loader.use_buffer_reader
+        self._prefetch_factor = loader.prefetch_factor
         self._use_shared_memory = loader.use_shared_memory
         self._timeout = loader.timeout if loader.timeout > 0 else MP_STATUS_CHECK_INTERVAL
         self._worker_init_fn = loader.worker_init_fn
@@ -166,9 +167,10 @@ class _DataLoaderIterSingleProcess(_DataLoaderIterBase):
         self._structure_infos = []
 
         # NOTE: len(self._places) batch data compose as an output
-        # iteration, set blocking_queue can cache 2 iteration datas
+        # iteration, set blocking_queue can cache "self._prefetch_factor" iteration datas
         # at most here
-        self._blocking_queue_capacity = 1 * len(self._places)
+        self._blocking_queue_capacity = self._prefetch_factor * len(
+            self._places)
 
         self._init_thread()
         self._shutdown = False
@@ -274,13 +276,12 @@ class _DataLoaderIterSingleProcess(_DataLoaderIterBase):
                         data = self._reader.read_next_list()
                         for i in range(len(data)):
                             data[i] = data[i]._move_to_list()
-                        data = [
-                            _restore_batch(d, s)
-                            for d, s in zip(data, self._structure_infos[:len(
-                                self._places)])
+                        structs = [
+                            self._structure_infos.pop(0)
+                            for _ in range(len(self._places))
                         ]
-                        self._structure_infos = self._structure_infos[len(
-                            self._places):]
+                        data = [_restore_batch(d, s) \
+                                for d, s in zip(data, structs)]
                         # static graph organized data on multi-device with list, if
                         # place number is 1, there is only 1 device, extra the data
                         # from list for devices to be compatible with dygraph mode
@@ -363,14 +364,16 @@ class _DataLoaderIterMultiProcess(_DataLoaderIterBase):
         # indices outstand as _outstanding_capacity at first, and
         # blocking_queue capacity is also _outstanding_capacity.
         # _outstanding_capacity here to make sure each indices_queue
-        # has at least 2 indices, and outstanding batch cached
-        # output data for at least 2 iterations(Note that len(_places)
+        # has at least "_prefetch_factor" indices, and outstanding batch cached
+        # output data for at least "_prefetch_factor" iterations(Note that len(_places)
         # batches will be composed as an iteration output)
-        self._outstanding_capacity = 2 * max(self._num_workers,
-                                             len(self._places))
+        self._outstanding_capacity = self._prefetch_factor * max(
+            self._num_workers, len(self._places))
 
         # see _try_put_indices
         self._thread_lock = threading.Lock()
+
+        self._base_seed = np.random.randint(low=0, high=sys.maxsize)
 
         # init workers and indices queues and put 2 indices in each indices queue
         self._init_workers()
@@ -404,7 +407,8 @@ class _DataLoaderIterMultiProcess(_DataLoaderIterBase):
                       self._data_queue, self._workers_done_event,
                       self._auto_collate_batch, self._collate_fn,
                       self._drop_last, self._worker_init_fn, i,
-                      self._num_workers, self._use_shared_memory))
+                      self._num_workers, self._use_shared_memory,
+                      self._base_seed))
             worker.daemon = True
             worker.start()
             self._workers.append(worker)
@@ -746,13 +750,12 @@ class _DataLoaderIterMultiProcess(_DataLoaderIterBase):
                         data = self._reader.read_next_list()
                         for i in range(len(data)):
                             data[i] = data[i]._move_to_list()
-                        data = [
-                            _restore_batch(d, s)
-                            for d, s in zip(data, self._structure_infos[:len(
-                                self._places)])
+                        structs = [
+                            self._structure_infos.pop(0)
+                            for _ in range(len(self._places))
                         ]
-                        self._structure_infos = self._structure_infos[len(
-                            self._places):]
+                        data = [_restore_batch(d, s) \
+                                for d, s in zip(data, structs)]
                         # static graph organized data on multi-device with list, if
                         # place number is 1, there is only 1 device, extra the data
                         # from list for devices to be compatible with dygraph mode

@@ -82,7 +82,7 @@ struct DropoutParam {
     auto& dropout_implementation =
         context.Attr<std::string>(pre_fix + "implementation");
     is_upscale_in_train = (dropout_implementation == "upscale_in_train");
-    is_test = context.Attr<bool>(pre_fix + "is_test");
+    is_test = context.Attr<bool>("is_test");
     fix_seed = context.Attr<bool>(pre_fix + "fix_seed");
 
     std::string str_seed = "Dropout";
@@ -150,9 +150,10 @@ class FusedDropoutHelper {
     LaunchResidualDropoutBiasGrad<T, uint8_t>(
         d_out, mask, dropout_param_.dropout_prob,
         dropout_param_.is_upscale_in_train, rows_, cols_, d_src, d_bias, ctx);
-    auto cuda_place = ctx.GetPlace();
-    memory::Copy(cuda_place, d_residual, cuda_place, d_out,
-                 rows_ * cols_ * sizeof(T), ctx.stream());
+    if (d_residual) {
+      memory::Copy(ctx.GetPlace(), d_residual, ctx.GetPlace(), d_out,
+                   rows_ * cols_ * sizeof(T), ctx.stream());
+    }
   }
 
   // out = dropout(activation(src + bias))

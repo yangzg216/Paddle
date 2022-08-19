@@ -401,7 +401,9 @@ void EighInferMeta(const MetaTensor& x,
 
 void EinsumInferMeta(const std::vector<const MetaTensor*>& inputs,
                      const std::string& equation,
-                     MetaTensor* out) {
+                     MetaTensor* out,
+                     std::vector<MetaTensor*> inner_cache,
+                     std::vector<MetaTensor*> xshape) {
   // collect the following informations to prepare einsum.
   LabelMap labelshape(0);
   LabelMap labeltype(LabelType::Reduction);
@@ -438,6 +440,12 @@ void EinsumInferMeta(const std::vector<const MetaTensor*>& inputs,
   VLOG(3) << "Label Shape is : " << label_to_string(all_labels, labelshape);
   out->set_dims(make_ddim(output_dims));
   out->set_dtype(inputs[0]->dtype());
+  for (size_t i = 0; i < xshape.size(); ++i) {
+    if (xshape[i] != nullptr) {
+      xshape[i]->set_dims(inputs[i]->dims());
+      xshape[i]->set_dtype(inputs[i]->dtype());
+    }
+  }
 }
 
 void ExpandInferMeta(const MetaTensor& x,
